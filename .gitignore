@@ -1,0 +1,24 @@
+# python cache
+__pycache__
+
+
+src/result/
+
+CLAUDE.me
+
+assets/
+notebooks/
+results/
+
+# attack target models & checkpoints
+# src/model/**
+# !src/model/*
+# src/model/*/
+src/model/*/
+
+
+submission/
+
+# exclude third-party dependencies
+src/tools/SoM/
+src/tools/tiny-cuda-nn/
