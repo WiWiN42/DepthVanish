@@ -17,12 +17,11 @@ from pathlib import Path
 import torch
 import cv2
 import numpy as np
-from xxhash import xxh32_hexdigest
 
 from config import Config
 
 from model.stereo_model import StereoModel
-from utils.assemble import DPABoard, determine_board_size
+from utils.assemble import DPABoard, determine_board_size, find_maximum_rectangle
 from utils.dataset import StereoDataset, VirtualKITTI2Loader
 from utils.deploy import DigitalDeploy, StereoPatchDeployer
 from utils.metric import cal_metric
@@ -33,7 +32,7 @@ from utils.tool import save_img, save_depth, save_perturb, load_image, lp_projec
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--cfg", type=str, default="/home/yxing/projects/stereo_PhysicalAttack/src/config/temporal/template.py", help="the configuration to run the experiment")
+parser.add_argument("--cfg", type=str, default="./config/temporal/template.py", help="the configuration to run the experiment")
 
 args = parser.parse_args()
 
@@ -49,8 +48,9 @@ else:
 # setup saving root
 save_dir = os.path.join(os.getcwd(), cfg.exp.save_dir, cfg.exp.name)
 Path(save_dir).mkdir(parents=True, exist_ok=True)
-# save training and configuration source code
-shutil.copy(__file__, save_dir)
+# save training source code
+# shutil.copy(__file__, save_dir)
+# save configuration source
 shutil.copy(args.cfg, save_dir)
 
 # setup logger
@@ -88,9 +88,9 @@ logger.info(f"✓ Scene loader initialized with {len(scene_loader)} frames")
 
 # === Prepare the target surface mask ===
 logger.info(f"Loading surface mask from: {cfg.deploy.frame_mask_left}")
-assert os.path.exists(cfg.deploy.frame_mask_left), f"Surface mask file does not exist: {cfg.deploy.frame_mask_left}"
+assert os.path.exists(cfg.deploy.frame_mask_left), f"Surface mask not found at: {cfg.deploy.frame_mask_left}"
 surface_mask_left = cv2.imread(cfg.deploy.frame_mask_left, cv2.IMREAD_UNCHANGED) # ndarray, (h, w), uint8
-surface_mask_left = (surface_mask_left/255.0).astype(np.float32) # normalize to [0, 1]
+surface_mask_left = (surface_mask_left/255.0).astype(np.float32) # normalize
 assert len(surface_mask_left.shape) == 2, "The mask is supposed be a grayscale image."
 logger.info(f"✓ Surface mask loaded with shape: {surface_mask_left.shape}")
 
@@ -104,7 +104,6 @@ elif cfg.patch.mode == 'given_size': # directly use the user given patch size if
     # Warn if the given patch size exceeds the mask region — the patch will overhang
     # beyond the physical surface, causing deploy_mask to include unrealistic pixels
     # and optical flow tracking to extrapolate beyond tracked feature points.
-    from utils.assemble import find_maximum_rectangle
     (_, _, max_w, max_h), _ = find_maximum_rectangle(surface_mask_left)
     if board_height > max_h or board_width > max_w:
         logger.warning(
@@ -112,15 +111,19 @@ elif cfg.patch.mode == 'given_size': # directly use the user given patch size if
             f"rectangle in the mask ({max_h}, {max_w}). The patch will extend beyond the "
             f"target surface, which may cause inaccurate tracking and unrealistic deploy masks."
         )
+elif cfg.patch.mode == 'freeform':
+    # TODO the patch could also be deployed into the scene on a freeform billboard which can be hold anywhere
+    pass
 else:
     raise ValueError(f"Invalid patch mode: {cfg.patch.mode}. Supported modes are 'fit_size' and 'given_size'.")
+
 # the unit size is either given by user or determined by dividing the board into tiles
 if 'unit_size' in cfg.patch and cfg.patch.unit_size is not None:
     unit_height, unit_width = cfg.patch.unit_size
     n_ytiles = board_height // unit_height
     n_xtiles = board_width // unit_width
 elif 'yx_tiles' in cfg.patch and cfg.patch.yx_tiles is not None:
-    n_ytiles, n_xtiles = cfg.patch.yx_tiles[0], cfg.patch.yx_tiles[1]
+    n_ytiles, n_xtiles = cfg.patch.yx_tiles
     unit_height = board_height // n_ytiles
     unit_width = board_width // n_xtiles
 else:
@@ -147,7 +150,7 @@ unit_optimizer = torch.optim.Adam([board_manager._unit], lr=cfg.optimizer.lr)
 
 # torch.autograd.set_detect_anomaly(True)
 logger.info("✓ Optimizer initialized")
-logger.info(f"  Type: Adam, Learning rate: 0.01")
+logger.info(f"  Type: Adam, Learning rate: {cfg.optimizer.lr}")
 logger.info(f"  Total rounds: {cfg.exp.round}, Checkpoint interval: {cfg.exp.n_checkpoint}")
 logger.info(f"  Loss weights - entropy: {cfg.model.loss.alpha}, TV: {cfg.model.loss.gamma}, consistency: {cfg.model.loss.delta}")
 logger.info(f"  Consistency loss - EMA decay: 0.9")
@@ -213,6 +216,7 @@ for rnd in range(1, cfg.exp.round+1):
 
     logger.debug("[Step 3] Estimating disparity for perturbed stereo frames...")
     d1_error, epe_error = [], []
+    round_losses = []  # per-frame loss values, for a proper round-level mean at the end
     cur_round_disp_ratios = {}  # collect per-frame pred/GT ratios for next round's reweighting
 
     # Compute per-frame weights from previous round's pred/GT ratios.
@@ -230,11 +234,46 @@ for rnd in range(1, cfg.exp.round+1):
         frame_weights = None  # uniform
 
     unit_optimizer.zero_grad()  # zero grad once before the frame loop
+    is_checkpoint_round = (rnd % cfg.exp.n_checkpoint == 0)
+
+    if is_checkpoint_round:
+        # create subdirectories for saving results
+        subdirs = ['board', 'depth', 'unit', 'image', 'mask']
+        patch_dir, depth_dir, unit_dir, img_dir, mask_dir = [
+            os.path.join(save_dir, f'round{rnd:03d}', subdir) for subdir in subdirs
+        ]
+        for subdir in [patch_dir, depth_dir, unit_dir, img_dir, mask_dir]:
+            Path(subdir).mkdir(parents=True, exist_ok=True)
+
+        # board_manager._unit and opt_board are constant for the whole round (only updated by
+        # unit_optimizer.step() after this loop finishes), so save each exactly once per
+        # checkpoint round here instead of once per frame inside the loop below.
+        unit_path = os.path.join(unit_dir, f'{rnd:03d}_unit.jpg')
+        save_perturb(board_manager._unit+0.5, unit_path)
+        logger.debug(f"  ✓ Unit patch saved")
+
+        board_path = os.path.join(patch_dir, f'{rnd:03d}_board.jpg')
+        save_perturb(opt_board, board_path)
+        logger.debug(f"  ✓ Assembled board saved")
+
     for i, (imgL, imgR, deploy_mask) in enumerate(zip(results_left, results_right, tracked_masks)):
 
-        if not i in deploy_idx_range:
-            # for logging purposed, we still process to get the depth when no patch is deployed
+        if i not in filtered_deploy_range and not is_checkpoint_round:
+            # This frame contributes nothing this round: it's outside filtered_deploy_range
+            # (no loss/backward) and this isn't a checkpoint round (nothing gets saved). The
+            # stereo model forward pass is by far the most expensive thing in this loop --
+            # running it on every non-deploy frame of the clip, every round, for a result
+            # that's immediately discarded (see the `del ... perturb_disp` below) dominates
+            # this script's wall-clock time for no benefit. Skip it entirely here.
+            continue
+
+        # render_patch_stereo() hands back a torch.Tensor only when the patch was actually
+        # rendered for this frame (all_visibility[i] and depth available); otherwise it's a
+        # raw numpy frame copy.
+        # For logging purpose, we still process to get the depth when no patch is deployed.
+        if not torch.is_tensor(imgL):
             imgL = torch.from_numpy(imgL).float()
+        if not torch.is_tensor(imgR):
             imgR = torch.from_numpy(imgR).float()
 
         # add batch dimension then move to device
@@ -246,68 +285,72 @@ for rnd in range(1, cfg.exp.round+1):
 
         if i in filtered_deploy_range:
 
-            # original losses
-            mse_loss = regional_mean_square_error(perturb_disp, mask=deploy_mask)
-            ent_loss = entropy_loss(opt_board)
-            tv_loss = total_variation_loss(opt_board)
+            if not np.any(deploy_mask):
+                # render_patch_torch can legitimately return an all-empty visibility mask for
+                # one frame within an otherwise-visible range (patch clipped outside the image,
+                # occluded, or a degenerate homography). Indexing perturb_disp/gt_disp_fitted by
+                # an empty mask below would silently produce NaN via torch.mean() on zero
+                # elements, poisoning the whole round's accumulated gradient on _unit once
+                # loss.backward() runs -- skip this frame instead.
+                logger.warning(f"[Frame {i:03d}] Empty deploy_mask despite being in filtered_deploy_range -- skipping loss for this frame")
+            else:
+                # original losses
+                mse_loss = regional_mean_square_error(perturb_disp, mask=deploy_mask)
+                ent_loss = entropy_loss(opt_board)
+                tv_loss = total_variation_loss(opt_board)
 
-            # NOTE frame-wise attack effect unsatisfied loss NOTE
+                # NOTE frame-wise attack effect unsatisfied loss NOTE
 
-            ## get ground-truth disparity first
-            gt_disp = scene_loader.compute_disparity_from_depth(scene_loader.get_frame(frame_idx=i)['depth'], frame_idx=i)
-            # Convert gt_disp to tensor if it's a numpy array
-            if isinstance(gt_disp, np.ndarray):
-                gt_disp = torch.from_numpy(gt_disp).float()
+                ## get ground-truth disparity first
+                gt_disp = scene_loader.compute_disparity_from_depth(scene_loader.get_frame(frame_idx=i)['depth'], frame_idx=i)
+                # Convert gt_disp to tensor if it's a numpy array
+                if isinstance(gt_disp, np.ndarray):
+                    gt_disp = torch.from_numpy(gt_disp).float()
 
-            # fit the ground-truth disparity to the patch region
-            surface_mask = deployment_info.all_masks[i]
-            valid_region = (surface_mask > 0.5) & deploy_mask
-            gt_disp_fitted = fit_disparity_plane(gt_disp, valid_region, deploy_mask)
+                # fit the ground-truth disparity to the patch region
+                surface_mask = deployment_info.all_masks[i]
+                valid_region = (surface_mask > 0.5) & deploy_mask
+                gt_disp_fitted = fit_disparity_plane(gt_disp, valid_region, deploy_mask)
 
-            # Normalize MSE by squared mean GT disparity so that close and far
-            # frames contribute equally (detached — no gradient through GT).
-            with torch.no_grad():
-                gt_scale = gt_disp_fitted[deploy_mask > 0.5].mean() ** 2 + 1e-6
-            mse_loss = mse_loss / gt_scale
+                # Normalize MSE by squared mean GT disparity so that close and far
+                # frames contribute equally (detached — no gradient through GT).
+                with torch.no_grad():
+                    gt_scale = gt_disp_fitted[deploy_mask > 0.5].mean() ** 2 + 1e-6
+                mse_loss = mse_loss / gt_scale
 
-            # mse_loss = disparity_ratio_loss(perturb_disp, gt_disp_fitted, target_ratio=0.5, mask=deploy_mask)
+                # mse_loss = disparity_ratio_loss(perturb_disp, gt_disp_fitted, target_ratio=0.5, mask=deploy_mask)
 
-            # --- Worst-case reweighting ---
-            # Reweight this frame's loss using pred/GT ratio from the PREVIOUS
-            # round: frames where the attack was failing (ratio near 1) get a
-            # larger weight, frames already effective (ratio near 0) get downweighted.
-            # Using ratio instead of raw disparity makes weights distance-invariant.
-            w_i = frame_weights[i] if frame_weights is not None else 1.0
+                # --- Worst-case reweighting ---
+                # Reweight this frame's loss using pred/GT ratio from the PREVIOUS
+                # round: frames where the attack was failing (ratio near 1) get a
+                # larger weight, frames already effective (ratio near 0) get downweighted.
+                # Using ratio instead of raw disparity makes weights distance-invariant.
+                # .get(..., 1.0): a frame skipped for an empty mask in one round is absent
+                # from that round's recorded ratios, so it may be missing here too.
+                w_i = frame_weights.get(i, 1.0) if frame_weights is not None else 1.0
 
-            # Record current frame's pred/GT disparity ratio for next round's weights
-            with torch.no_grad():
-                mean_pred = perturb_disp[deploy_mask > 0.5].mean().item()
-                mean_gt = gt_disp_fitted[deploy_mask > 0.5].mean().item() + 1e-6
-                cur_round_disp_ratios[i] = mean_pred / mean_gt
+                # Record current frame's pred/GT disparity ratio for next round's weights
+                with torch.no_grad():
+                    mean_pred = perturb_disp[deploy_mask > 0.5].mean().item()
+                    mean_gt = gt_disp_fitted[deploy_mask > 0.5].mean().item() + 1e-6
+                    cur_round_disp_ratios[i] = mean_pred / mean_gt
 
-            # overall loss
-            loss = w_i * (cfg.model.loss.beta * mse_loss + cfg.model.loss.alpha * ent_loss + cfg.model.loss.gamma * tv_loss)
-            # + cfg.model.loss.beta*consis_loss + cfg.model.loss.delta*frequency_loss(opt_mask)
+                # overall loss
+                loss = w_i * (cfg.model.loss.beta * mse_loss + cfg.model.loss.alpha * ent_loss + cfg.model.loss.gamma * tv_loss)
+                # + cfg.model.loss.beta*consis_loss + cfg.model.loss.delta*frequency_loss(opt_mask)
 
-            logger.debug(f"[Frame {i:03d}] Loss breakdown - MSE: {mse_loss:.6f}, Entropy: {ent_loss:.6f}, TV: {tv_loss:.6f}, Weight: {w_i:.3f}, Total: {loss:.6f}")
+                logger.debug(f"[Frame {i:03d}] Loss breakdown - MSE: {mse_loss:.6f}, Entropy: {ent_loss:.6f}, TV: {tv_loss:.6f}, Weight: {w_i:.3f}, Total: {loss:.6f}")
 
-            logger.debug(f"[Frame {i:03d}] Accumulating gradient...")
-            # board_grad = autograd.grad(loss, opt_board)[0]
-            loss.backward()
+                logger.debug(f"[Frame {i:03d}] Accumulating gradient...")
+                # board_grad = autograd.grad(loss, opt_board)[0]
+                loss.backward()
+                round_losses.append(loss.item())
 
-            d1, epe = cal_metric(perturb_disp.cpu(), gt_disp_fitted, deploy_mask)
-            d1_error.append(d1)
-            epe_error.append(epe)
+                d1, epe = cal_metric(perturb_disp.cpu(), gt_disp_fitted, deploy_mask)
+                d1_error.append(d1)
+                epe_error.append(epe)
 
-        if rnd % cfg.exp.n_checkpoint == 0:
-
-            # create subdirectories for saving results
-            subdirs = ['board', 'depth', 'unit', 'image', 'mask']
-            patch_dir, depth_dir, unit_dir, img_dir, mask_dir = [
-                os.path.join(save_dir, f'round{rnd:03d}', subdir) for subdir in subdirs
-            ]
-            for subdir in [patch_dir, depth_dir, unit_dir, img_dir, mask_dir]:
-                Path(subdir).mkdir(parents=True, exist_ok=True)
+        if is_checkpoint_round:
 
             # save the frames with patch deployed
             logger.info(f"[Round {rnd:03d}] Saving frames{i:03d}...")
@@ -323,18 +366,8 @@ for rnd in range(1, cfg.exp.round+1):
             save_img(deploy_mask, mask_path)
             logger.debug(f"  ✓ Region mask saved")
 
-            logger.info(f"[Round {rnd:03d}] Saving predictions for frame{i:03d}...")
-
-            unit_path = os.path.join(unit_dir, f'{i:03d}_unit.jpg')
-            save_perturb(board_manager._unit+0.5, unit_path)
-            logger.debug(f"  ✓ Unit patch saved")
-
-            # save the assembled board
-            board_path = os.path.join(patch_dir, f'{i:03d}_board.jpg')
-            save_perturb(opt_board, board_path)
-            logger.debug(f"  ✓ Assembled board saved")
-
             # save the perturbed depth
+            logger.info(f"[Round {rnd:03d}] Saving predictions for frame{i:03d}...")
             depth_path = os.path.join(depth_dir, f'{i:03d}_depth.jpg')
             save_depth(
                 perturb_disp,
@@ -398,7 +431,10 @@ for rnd in range(1, cfg.exp.round+1):
         best_result['epe_std'] = std_epe
         logger.info(f"→ New best result found at round {rnd:03d}")
 
-    logger.info(f"Round {rnd:03d} completed - Total Loss: {loss:.6f}\n")
+    if round_losses:
+        logger.info(f"Round {rnd:03d} completed - Mean Loss: {np.mean(round_losses):.6f} ({len(round_losses)} frames)\n")
+    else:
+        logger.info(f"Round {rnd:03d} completed - Mean Loss: N/A (no frames contributed this round)\n")
 
 logger.info("\n" + "=" * 60)
 logger.info("OPTIMIZATION COMPLETE")

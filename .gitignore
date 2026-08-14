@@ -22,3 +22,9 @@ submission/
 # exclude third-party dependencies
 src/tools/SoM/
 src/tools/tiny-cuda-nn/
+
+.vscode/
+.cursor/
+.cursor*
+.claude/
+CLAUDE.md

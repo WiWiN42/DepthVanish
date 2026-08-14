@@ -18,7 +18,8 @@
 #   https://europe.naverlabs.com/research/computer-vision/proxy-virtual-worlds-vkitti-2/
 # License: CC BY-NC-SA 3.0 -- non-commercial research use only.
 #
-# Disk usage: roughly 40 GB total (rgb + depth + forward/backward flow + textgt).
+# Disk usage: ~71 GB total (rgb 7.0GB + depth 7.6GB + forwardFlow 29.6GB +
+# backwardFlow 27.1GB + textgt 23MB -- sizes per the official download page).
 # Segmentation/scene-flow archives are intentionally NOT downloaded here --
 # nothing in VirtualKITTI2Loader.file_templates reads them (see the commented-out
 # "segmentation"/"instance" entries in src/utils/dataset.py).
@@ -32,14 +33,15 @@ set -euo pipefail
 
 TARGET_DIR="${1:-/mnt/data/data_yxing/Virtual_KITTI2}"
 DOWNLOAD_DIR="${TARGET_DIR}/_downloads"
-BASE_URL="http://download.europe.naverlabs.com/virtual_kitti_2.2.0"
+# Verified 2026-08-13 (curl -I returned 200 on all five archives below).
+BASE_URL="https://download.europe.naverlabs.com/virtual_kitti_2.0.3"
 
 ARCHIVES=(
-    "vkitti_2.2.0_rgb.tar"
-    "vkitti_2.2.0_depth.tar"
-    "vkitti_2.2.0_forwardFlow.tar"
-    "vkitti_2.2.0_backwardFlow.tar"
-    "vkitti_2.2.0_textgt.tar.gz"
+    # "vkitti_2.0.3_rgb.tar"
+    # "vkitti_2.0.3_depth.tar"
+    "vkitti_2.0.3_forwardFlow.tar"
+    "vkitti_2.0.3_backwardFlow.tar"
+    # "vkitti_2.0.3_textgt.tar.gz"
 )
 
 echo "==> Target directory: ${TARGET_DIR}"

@@ -15,8 +15,7 @@ plain python module and every top-level, non-dunder name becomes an attribute ac
 resulting `Config` object — e.g. the `exp = dict(gpu=0, ...)` block below becomes `cfg.exp.gpu`
 inside opt_video_case.py. All six top-level dicts here (exp, dataset, model, optimizer, patch,
 deploy) are read by that script; missing a required key raises an AttributeError at startup
-before any model/scene loading happens (this is exactly what happened before `optimizer` was
-added to every model config — always keep it).
+before any model/scene loading happens.
 """
 
 # ---------------------------------------------------------------------------

@@ -22,12 +22,12 @@
 #   https://www.cvlibs.net/datasets/kitti/raw_data.php
 # License: CC BY-NC-SA 3.0 -- non-commercial research use only.
 #
-# CAUTION: the exact S3 URL layout below (raw_data/<drive>/<drive>.zip) matches
-# the pattern used by several public KITTI download scripts at the time this
-# was written, but KITTI has changed its hosting before. If a download 404s,
-# check https://www.cvlibs.net/datasets/kitti/raw_data.php for the current
-# per-sequence download links and either update BASE_URL or fetch that one
-# sequence by hand.
+# URL layout verified 2026-08-13 with curl -I (each returned 200):
+#   calibration: raw_data/<date>_calib.zip
+#   drive data:  raw_data/<date>_drive_<seq>/<date>_drive_<seq>_{sync,extract}.zip
+#   (note the folder segment drops the _sync/_extract suffix that the filename keeps)
+# If KITTI changes hosting again and a download 404s, check
+# https://www.cvlibs.net/datasets/kitti/raw_data.php for current links.
 #
 # Usage: bash download_kitti_raw.sh [TARGET_DIR]
 #   TARGET_DIR defaults to /mnt/data/data_yxing/KITTI_raw, matching the paths
@@ -58,8 +58,7 @@ printf '    %s\n' "${DRIVES[@]}"
 n_extract=$(printf '%s\n' "${DRIVES[@]}" | grep -c "_extract$" || true)
 if [ "${n_extract}" -gt 0 ]; then
     echo "    (${n_extract} of these are '_extract' unsynced sequences -- typically much larger"
-    echo "     downloads than '_sync' ones; same URL convention is assumed for both, see the"
-    echo "     CAUTION note above if any of these specifically fail to download)"
+    echo "     downloads than '_sync' ones)"
 fi
 echo
 
@@ -99,8 +98,11 @@ for entry in "${DRIVES[@]}"; do
         fi
     fi
 
+    # The URL's folder segment drops the _sync/_extract suffix; the filename keeps it.
+    drive_dir="${drive%_sync}"
+    drive_dir="${drive_dir%_extract}"
     drive_out="${DOWNLOAD_DIR}/${drive}.zip"
-    if download "${BASE_URL}/${drive}/${drive}.zip" "${drive_out}"; then
+    if download "${BASE_URL}/${drive_dir}/${drive}.zip" "${drive_out}"; then
         # The zip's own top-level entry is already "<date>/", so extract straight
         # into TARGET_DIR -- extracting into TARGET_DIR/<date> would double-nest it
         # (TARGET_DIR/<date>/<date>/<date>_drive_..._sync/...), same as the calib zip above.
@@ -113,8 +115,8 @@ done
 echo
 echo "==> Done. ${#DATES_SEEN[@]} date(s), ${#DRIVES[@]} drive(s) processed into ${TARGET_DIR}."
 if [ "${fail_count}" -gt 0 ]; then
-    echo "    ${fail_count} download(s) failed -- see the CAUTION note in this script's header"
-    echo "    and retry those sequences manually from https://www.cvlibs.net/datasets/kitti/raw_data.php"
+    echo "    ${fail_count} download(s) failed -- retry those sequences manually from"
+    echo "    https://www.cvlibs.net/datasets/kitti/raw_data.php"
 fi
 echo "==> If TARGET_DIR differs from /mnt/data/data_yxing/KITTI_raw, update the paths recorded in"
 echo "    data/split/kitti_train_image0.txt and data/split/kitti_train_image1.txt to match."
