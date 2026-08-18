@@ -23,6 +23,9 @@ submission/
 src/tools/SoM/
 src/tools/tiny-cuda-nn/
 
+# macos stuff
+.DS_Store
+
 .vscode/
 .cursor/
 .cursor*

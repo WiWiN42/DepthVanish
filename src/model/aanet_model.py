@@ -8,10 +8,15 @@
 
 import os, sys
 import torch, torchvision
+# Use this file's own directory rather than the process's cwd -- the vendored aanet repo's
+# internal modules (e.g. nets/aanet.py) do absolute imports like `from nets.feature import
+# ...` that require aanet's own subdirectories on sys.path, regardless of where this script
+# was invoked from.
+_MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.getcwd())
-sys.path.insert(0, os.path.join('model', 'aanet'))
-sys.path.insert(0, os.path.join('model', 'aanet', 'dataloader'))
-sys.path.insert(0, os.path.join('model', 'aanet', 'nets'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'aanet'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'aanet', 'dataloader'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'aanet', 'nets'))
 from model.aanet.nets import AANet
 from model.aanet.utils import utils
 

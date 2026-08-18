@@ -15,9 +15,15 @@ https://arxiv.org/pdf/2112.06116.pdf
 
 import os, sys
 import torch, torchvision
+# Use this file's own directory rather than the process's cwd, so this resolves regardless of
+# where the script was invoked from. Also fixes a pre-existing case mismatch: the on-disk
+# directory is "PSMNet", not "psmnet", so these inserts were previously always pointing at a
+# nonexistent path (harmless so far only because PSMNet's own modules import via relative
+# `from .submodule import ...`, not an absolute top-level package).
+_MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.getcwd())
-sys.path.insert(0, os.path.join('model', 'psmnet'))
-sys.path.insert(0, os.path.join('model', 'psmnet', 'models'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'PSMNet'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'PSMNet', 'models'))
 from model.PSMNet.models import stackhourglass
 
 

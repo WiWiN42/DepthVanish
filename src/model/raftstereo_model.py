@@ -9,9 +9,13 @@
 import os, sys
 import torch, torchvision
 from argparse import Namespace
+# Use this file's own directory rather than the process's cwd -- raft_stereo.py does absolute
+# imports like `from core.update import ...` that require RAFT-Stereo's own subdirectories on
+# sys.path, regardless of where this script was invoked from.
+_MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.getcwd())
-sys.path.insert(0, os.path.join('model', 'RAFT-Stereo'))
-sys.path.insert(0, os.path.join('model', 'RAFT-Stereo', 'core'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'RAFT-Stereo'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'RAFT-Stereo', 'core'))
 from core.raft_stereo import RAFTStereo
 from core.utils.utils import InputPadder
 

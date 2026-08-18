@@ -9,8 +9,12 @@ import os, sys
 import torch, torchvision
 from argparse import Namespace
 
+# Use this file's own directory rather than the process's cwd -- sttr.py does absolute imports
+# like `from module.feat_extractor_backbone import ...` that require stereo-transformer's own
+# subdirectories on sys.path, regardless of where this script was invoked from.
+_MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.getcwd())
-sys.path.insert(0, os.path.join('model', 'stereo-transformer'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'stereo-transformer'))
 from module.sttr import STTR
 from utilities.misc import NestedTensor
 

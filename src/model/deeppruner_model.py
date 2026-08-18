@@ -15,10 +15,14 @@ https://arxiv.org/pdf/2112.06116.pdf
 
 import os, sys
 import torch, torchvision
+# Use this file's own directory rather than the process's cwd -- deeppruner.py does absolute
+# imports like `from models.submodules3d import ...` that require DeepPruner's own
+# subdirectories on sys.path, regardless of where this script was invoked from.
+_MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.getcwd())
-sys.path.insert(0, os.path.join('model', 'DeepPruner'))
-sys.path.insert(0, os.path.join('model', 'DeepPruner', 'deeppruner'))
-sys.path.insert(0, os.path.join('model', 'DeepPruner', 'deeppruner', 'models'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'DeepPruner'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'DeepPruner', 'deeppruner'))
+sys.path.insert(0, os.path.join(_MODEL_DIR, 'DeepPruner', 'deeppruner', 'models'))
 from model.DeepPruner.deeppruner.models.deeppruner import DeepPruner
 from model.DeepPruner.deeppruner.loss_evaluation import loss_evaluation
 

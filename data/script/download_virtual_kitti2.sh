@@ -37,11 +37,11 @@ DOWNLOAD_DIR="${TARGET_DIR}/_downloads"
 BASE_URL="https://download.europe.naverlabs.com/virtual_kitti_2.0.3"
 
 ARCHIVES=(
-    # "vkitti_2.0.3_rgb.tar"
-    # "vkitti_2.0.3_depth.tar"
+    "vkitti_2.0.3_rgb.tar"
+    "vkitti_2.0.3_depth.tar"
     "vkitti_2.0.3_forwardFlow.tar"
     "vkitti_2.0.3_backwardFlow.tar"
-    # "vkitti_2.0.3_textgt.tar.gz"
+    "vkitti_2.0.3_textgt.tar.gz"
 )
 
 echo "==> Target directory: ${TARGET_DIR}"
