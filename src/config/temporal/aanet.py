@@ -1,15 +1,17 @@
 exp = dict(
-    gpu=1,
-    name='aanet_vkitti2_scene18_clone_frame296_id5_ratioLoss', # model_dataset_scene_variation_patch
-    round=200,
+    gpu=0,
+    # seed=0, # global random seed for reproducibility (RANSAC, flow tracking, torch/cv2 RNG)
+    # name='aanet_vkitti2_scene18_clone_frame296_id5_init', # model_dataset_scene_variation_patch
+    name='aanet_vkitti2_scene18_clone_frame296_id5',
+    round=100,
     n_checkpoint=10,
-    save_dir='/home/yxing/projects/stereo_PhysicalAttack/results/temporal/distance',
+    save_dir='/data3/luqi/yxing/stereo_PhysicalAttack/results/temporal/base',
     log_level='debug',
 )
 
 dataset = dict(
     name='vkitti2',
-    root='/mnt/data/data_yxing/Virtual_KITTI2',
+    root='/data3/luqi/yxing/dataset/Virtual_KITTI2',
     scene='18',
     variation='clone',
     # normalize=True, # normalize to [0,1] range
@@ -17,18 +19,18 @@ dataset = dict(
 
 model = dict(
     name='aanet',
-    ckpt='/home/yxing/projects/stereo_PhysicalAttack/src/model/_checkpoints/aanet_kitti15-fb2a0d23.pth',
+    ckpt='/data3/luqi/yxing/stereo_PhysicalAttack/src/model/_checkpoints/aanet_kitti15-fb2a0d23.pth',
     loss = dict(
         unit_norm=True,
-        alpha=0.1,
-        beta=1.0,
-        gamma=10,
-        delta=0.01,
+        alpha=1,   # entropy weight: 0.1 -> 0.5, push harder toward binary (0/1)
+        beta=0.01,
+        gamma=10,     # TV weight: 10 -> 3, stop suppressing texture formation
+        delta=1,
     )
 )
 
 optimizer = dict(
-    lr=0.01
+    lr=0.1
 )
 
 
@@ -58,5 +60,5 @@ patch = dict(
 
 deploy = dict(
     start_frame_idx=296, # frame index starts from 0
-    frame_mask_left='/home/yxing/projects/stereo_PhysicalAttack/assets/masks/scene18_frame296_som_id5_mask.jpg.png',
+    frame_mask_left='/data3/luqi/yxing/stereo_PhysicalAttack/assets/masks/scene18_frame296_som_id5_mask.jpg.png',
 )

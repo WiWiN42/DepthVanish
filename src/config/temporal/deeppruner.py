@@ -1,15 +1,15 @@
 exp = dict(
-    gpu=0,
-    name='deeppruner_vkitti2_scene18_clone_frame296_id5_frameREWEIGHT&SCALE10*mse', # model_dataset_scene_variation_frame_region
-    round=200,
+    gpu=1,
+    name='deeppruner_vkitti2_scene18_clone_frame296_id5', # model_dataset_scene_variation_frame_region
+    round=100,
     n_checkpoint=10,
-    save_dir='/home/yxing/projects/stereo_PhysicalAttack/results/temporal/distance/_only_effective_range',
+    save_dir='/data3/luqi/yxing/stereo_PhysicalAttack/results/temporal/base',
     log_level='debug',
 )
 
 dataset = dict(
     name='vkitti2',
-    root='/mnt/data/data_yxing/Virtual_KITTI2',
+    root='/data3/luqi/yxing/dataset/Virtual_KITTI2',
     scene='18',
     variation='clone',
     # normalize=True, # normalize to [0,1] range
@@ -17,7 +17,7 @@ dataset = dict(
 
 model = dict(
     name='deeppruner',
-    ckpt='/home/yxing/projects/stereo_PhysicalAttack/src/model/_checkpoints/DeepPruner-best-kitti.tar',
+    ckpt='/data3/luqi/yxing/stereo_PhysicalAttack/src/model/_checkpoints/DeepPruner-best-kitti.tar',
     loss = dict(
         unit_norm=True,
         alpha=0.1,
@@ -51,5 +51,5 @@ patch = dict(
 
 deploy = dict(
     start_frame_idx=296, # frame index starts from 0
-    frame_mask_left='/home/yxing/projects/stereo_PhysicalAttack/assets/masks/scene18_frame296_som_id5_mask.jpg.png',
+    frame_mask_left='/data3/luqi/yxing/stereo_PhysicalAttack/assets/masks/scene18_frame296_som_id5_mask.jpg.png',
 )

@@ -5,10 +5,10 @@
 @Author  :   yxing
 """
 
-
 import os
 import sys
 import math
+import random
 import shutil
 import logging
 import argparse
@@ -68,6 +68,21 @@ logger.info(f"  Device: {device}")
 logger.info(f"  Experiment: {cfg.exp.name}")
 logger.info(f"  Save Directory: {save_dir}")
 logger.info("=" * 60)
+
+# ===== Reproducibility: fix the global random seed before any sampling =====
+# The pipeline's randomness comes from RANSAC plane fitting, optical-flow tracking
+# point sampling (both np.random) and any torch/cv2 RNG use. Seeding all of them
+# makes a full run reproducible from round 1 (same patch, same round curve).
+# seed = getattr(cfg.exp, 'seed', 0)
+# random.seed(seed)
+# np.random.seed(seed)
+# cv2.setRNGSeed(seed)
+# torch.manual_seed(seed)
+# if torch.cuda.is_available():
+#     torch.cuda.manual_seed_all(seed)
+# torch.backends.cudnn.deterministic = True
+# torch.backends.cudnn.benchmark = False
+# logger.info(f"Global random seed set to {seed} (deterministic mode, cudnn.benchmark disabled)")
 
 # === Initialize Stereo Estimator ===
 logger.info(f"Loading stereo model: {cfg.model.name}")
@@ -177,9 +192,27 @@ best_result = dict(
     epe=0,
     epe_std=0,
 )
-# Per-frame pred/GT disparity ratios from the previous round, used to reweight
-# the current round's losses so attack-ineffective frames get more gradient.
-prev_round_disp_ratios = None
+
+# ===== Pre-compute the deploy frame range once (static) =====
+# The depth filter and per-frame weights depend only on the scene geometry, not on the
+# optimization state, so compute them before the round loop and reuse them every round.
+max_distance = 15.0  # meters
+deploy_idx_range = range(deployment_info.start_idx, deployment_info.end_idx + 1)
+valid_start_idx = None
+for idx in deploy_idx_range:
+    frame_depth = scene_loader.get_frame(frame_idx=idx)['depth']
+    surface_mask_idx = deployment_info.all_masks[idx]
+    surface_depth = frame_depth[surface_mask_idx > 0.5]
+    valid_surface_depth = surface_depth[~np.isnan(surface_depth) & (surface_depth > 0)]
+    if len(valid_surface_depth) > 0 and np.mean(valid_surface_depth) < max_distance:
+        valid_start_idx = idx
+        break
+if valid_start_idx is not None:
+    filtered_deploy_range = range(valid_start_idx, deploy_idx_range.stop)
+else:
+    raise ValueError("No valid deployment frames found within the specified depth threshold. Please check the surface mask and its depth.")
+logger.info(f"Depth-filtered deploy frames: {len(filtered_deploy_range)} / {len(deploy_idx_range)} " f"(start idx: {valid_start_idx}, max surface depth threshold: {max_distance}m)")
+
 for rnd in range(1, cfg.exp.round+1):
     logger.info(f"{'='*60}")
     logger.info(f"Round {rnd:03d}/{cfg.exp.round:03d}")
@@ -191,47 +224,14 @@ for rnd in range(1, cfg.exp.round+1):
     logger.debug(f"[Step 1] Assembled opt_board from _unit: shape={opt_board.shape}, range=[{opt_board.min():.4f}, {opt_board.max():.4f}]")
 
     logger.debug("[Step 2] Embedding patch into stereo frames...")
-    results_left, results_right, tracked_masks, deploy_idx_range = board_deployer.render_patch_stereo(
+    results_left, results_right, tracked_masks, _deploy_idx_range = board_deployer.render_patch_stereo(
         deployment_info=deployment_info,
         patch_img=opt_board,
     )
 
-    # Pre-filter deployment frames by surface depth
-    max_distance = 15.0  # meters
-    valid_start_idx = None
-    for idx in deploy_idx_range:
-        frame_depth = scene_loader.get_frame(frame_idx=idx)['depth']
-        surface_mask_idx = deployment_info.all_masks[idx]
-        surface_depth = frame_depth[surface_mask_idx > 0.5]
-        valid_surface_depth = surface_depth[~np.isnan(surface_depth) & (surface_depth > 0)]
-        if len(valid_surface_depth) > 0 and np.mean(valid_surface_depth) < max_distance:
-            valid_start_idx = idx
-            break
-    if valid_start_idx is not None:
-        filtered_deploy_range = range(valid_start_idx, deploy_idx_range.stop)
-    else:
-        raise ValueError("No valid deployment frames found within the specified depth threshold. Please check the surface mask and its depth.")
-    logger.info(f"Depth-filtered deploy frames: {len(filtered_deploy_range)} / {len(deploy_idx_range)} " f"(start idx: {valid_start_idx}, max surface depth threshold: {max_distance}m)")
-
-
     logger.debug("[Step 3] Estimating disparity for perturbed stereo frames...")
     d1_error, epe_error = [], []
     round_losses = []  # per-frame loss values, for a proper round-level mean at the end
-    cur_round_disp_ratios = {}  # collect per-frame pred/GT ratios for next round's reweighting
-
-    # Compute per-frame weights from previous round's pred/GT ratios.
-    # Frames with ratio near 1 (attack failing) get larger weight.
-    # Frames with ratio near 0 (attack working) get smaller weight.
-    # GT normalization on MSE already handles distance-dependent loss scale.
-    # Weight formula: w_i = r_i / sum(r_j) * N
-    # First round uses uniform weights.
-    if prev_round_disp_ratios is not None:
-        total_ratio = sum(prev_round_disp_ratios.values()) + 1e-8
-        n_frames = len(prev_round_disp_ratios)
-        frame_weights = {idx: (r / total_ratio) * n_frames for idx, r in prev_round_disp_ratios.items()}
-        logger.debug(f"Frame weights from prev round: min={min(frame_weights.values()):.3f}, max={max(frame_weights.values()):.3f}")
-    else:
-        frame_weights = None  # uniform
 
     unit_optimizer.zero_grad()  # zero grad once before the frame loop
     is_checkpoint_round = (rnd % cfg.exp.n_checkpoint == 0)
@@ -320,26 +320,12 @@ for rnd in range(1, cfg.exp.round+1):
 
                 # mse_loss = disparity_ratio_loss(perturb_disp, gt_disp_fitted, target_ratio=0.5, mask=deploy_mask)
 
-                # --- Worst-case reweighting ---
-                # Reweight this frame's loss using pred/GT ratio from the PREVIOUS
-                # round: frames where the attack was failing (ratio near 1) get a
-                # larger weight, frames already effective (ratio near 0) get downweighted.
-                # Using ratio instead of raw disparity makes weights distance-invariant.
-                # .get(..., 1.0): a frame skipped for an empty mask in one round is absent
-                # from that round's recorded ratios, so it may be missing here too.
-                w_i = frame_weights.get(i, 1.0) if frame_weights is not None else 1.0
-
-                # Record current frame's pred/GT disparity ratio for next round's weights
-                with torch.no_grad():
-                    mean_pred = perturb_disp[deploy_mask > 0.5].mean().item()
-                    mean_gt = gt_disp_fitted[deploy_mask > 0.5].mean().item() + 1e-6
-                    cur_round_disp_ratios[i] = mean_pred / mean_gt
-
-                # overall loss
-                loss = w_i * (cfg.model.loss.beta * mse_loss + cfg.model.loss.alpha * ent_loss + cfg.model.loss.gamma * tv_loss)
+                # overall loss — uniform per-frame weight; the scale-MSE normalization
+                # above (mse / gt_scale^2) already balances close vs far frames.
+                loss = cfg.model.loss.beta * mse_loss + cfg.model.loss.alpha * ent_loss + cfg.model.loss.gamma * tv_loss
                 # + cfg.model.loss.beta*consis_loss + cfg.model.loss.delta*frequency_loss(opt_mask)
 
-                logger.debug(f"[Frame {i:03d}] Loss breakdown - MSE: {mse_loss:.6f}, Entropy: {ent_loss:.6f}, TV: {tv_loss:.6f}, Weight: {w_i:.3f}, Total: {loss:.6f}")
+                logger.debug(f"[Frame {i:03d}] Loss breakdown - MSE: {mse_loss:.6f}, Entropy: {ent_loss:.6f}, TV: {tv_loss:.6f}, Total: {loss:.6f}")
 
                 logger.debug(f"[Frame {i:03d}] Accumulating gradient...")
                 # board_grad = autograd.grad(loss, opt_board)[0]
@@ -401,9 +387,6 @@ for rnd in range(1, cfg.exp.round+1):
     # Step optimizer once after accumulating gradients from all frames
     unit_optimizer.step()
     board_manager._unit.data = lp_projection(board_manager._unit.data, 0.5, 'inf')
-
-    # Store per-frame pred/GT ratios for next round's reweighting
-    prev_round_disp_ratios = cur_round_disp_ratios
 
     # Free per-round tensors and reclaim GPU memory
     del results_left, results_right, tracked_masks, opt_board

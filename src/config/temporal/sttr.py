@@ -3,13 +3,13 @@ exp = dict(
     name='sttr_vkitti2_scene18_clone_frame296_id5_base', # model_dataset_scene_variation_patch
     round=200,
     n_checkpoint=1,
-    save_dir='/home/yxing/projects/stereo_PhysicalAttack/results/temporal/distance',
+    save_dir='/data3/luqi/yxing/stereo_PhysicalAttack/results/temporal/distance',
     log_level='debug',
 )
 
 dataset = dict(
     name='vkitti2',
-    root='/mnt/data/data_yxing/Virtual_KITTI2',
+    root='/data3/luqi/yxing/dataset/Virtual_KITTI2',
     scene='18',
     variation='clone',
     # normalize=True, # normalize to [0,1] range
@@ -17,7 +17,7 @@ dataset = dict(
 
 model = dict(
     name='sttr', 
-    ckpt='/home/yxing/projects/stereo_PhysicalAttack/src/model/_checkpoints/kitti_finetuned_model.pth.tar', # psmnet
+    ckpt='/data3/luqi/yxing/stereo_PhysicalAttack/src/model/_checkpoints/kitti_finetuned_model.pth.tar', # psmnet
     loss = dict(
         unit_norm=True,
         alpha=0.1,
@@ -51,5 +51,5 @@ patch = dict(
 
 deploy = dict(
     start_frame_idx=296, # frame index starts from 0
-    frame_mask_left='/home/yxing/projects/stereo_PhysicalAttack/assets/masks/scene18_frame296_som_id5_mask.jpg.png',
+    frame_mask_left='/data3/luqi/yxing/stereo_PhysicalAttack/assets/masks/scene18_frame296_som_id5_mask.jpg.png',
 )

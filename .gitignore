@@ -2,26 +2,27 @@
 __pycache__
 
 
-src/result/
 
-CLAUDE.me
+# pre-modification backups of code files (never commit)
+backup_pre_reweight/
 
+# auxiliaries
 assets/
 notebooks/
-results/
-
-# attack target models & checkpoints
-# src/model/**
-# !src/model/*
-# src/model/*/
-src/model/*/
-
-
 submission/
+
+# results and logs
+results/
+src/result/
+*.log
 
 # exclude third-party dependencies
 src/tools/SoM/
 src/tools/tiny-cuda-nn/
+# src/model/**
+# !src/model/*
+# src/model/*/
+src/model/*/
 
 # macos stuff
 .DS_Store
